@@ -20,7 +20,6 @@ CLI commands are implemented in the ui.commands module.
 
 from __future__ import division, absolute_import, print_function
 
-import locale
 import optparse
 import textwrap
 import sys
@@ -87,7 +86,7 @@ def _out_encoding():
     return _stream_encoding(sys.stdout)
 
 
-def _stream_encoding(stream, default='utf8'):
+def _stream_encoding(stream, default='utf-8'):
     """A helper for `_in_encoding` and `_out_encoding`: get the stream's
     preferred encoding, using a configured override or a default
     fallback if neither is not specified.
@@ -108,24 +107,12 @@ def _stream_encoding(stream, default='utf8'):
     return stream.encoding or default
 
 
-def _arg_encoding():
-    """Get the encoding for command-line arguments (and other OS
-    locale-sensitive strings).
-    """
-    try:
-        return locale.getdefaultlocale()[1] or 'utf8'
-    except ValueError:
-        # Invalid locale environment variable setting. To avoid
-        # failing entirely for no good reason, assume UTF-8.
-        return 'utf8'
-
-
 def decargs(arglist):
     """Given a list of command-line argument bytestrings, attempts to
     decode them to Unicode strings when running under Python 2.
     """
     if six.PY2:
-        return [s.decode(_arg_encoding()) for s in arglist]
+        return [s.decode(util.arg_encoding()) for s in arglist]
     else:
         return arglist
 
@@ -139,8 +126,7 @@ def print_(*strings, **kwargs):
     Python 3.
 
     The `end` keyword argument behaves similarly to the built-in `print`
-    (it defaults to a newline). The value should have the same string
-    type as the arguments.
+    (it defaults to a newline).
     """
     if not strings:
         strings = [u'']
@@ -149,11 +135,24 @@ def print_(*strings, **kwargs):
     txt = u' '.join(strings)
     txt += kwargs.get('end', u'\n')
 
-    # Send bytes to the stdout stream on Python 2.
+    # Encode the string and write it to stdout.
     if six.PY2:
-        txt = txt.encode(_out_encoding(), 'replace')
-
-    sys.stdout.write(txt)
+        # On Python 2, sys.stdout expects bytes.
+        out = txt.encode(_out_encoding(), 'replace')
+        sys.stdout.write(out)
+    else:
+        # On Python 3, sys.stdout expects text strings and uses the
+        # exception-throwing encoding error policy. To avoid throwing
+        # errors and use our configurable encoding override, we use the
+        # underlying bytes buffer instead.
+        if hasattr(sys.stdout, 'buffer'):
+            out = txt.encode(_out_encoding(), 'replace')
+            sys.stdout.buffer.write(out)
+            sys.stdout.buffer.flush()
+        else:
+            # In our test harnesses (e.g., DummyOut), sys.stdout.buffer
+            # does not exist. We instead just record the text string.
+            sys.stdout.write(txt)
 
 
 # Configuration wrappers.
@@ -850,7 +849,7 @@ class CommonOptionsParser(optparse.OptionParser, object):
         """
         path = optparse.Option(*flags, nargs=0, action='callback',
                                callback=self._set_format,
-                               callback_kwargs={'fmt': '$path',
+                               callback_kwargs={'fmt': u'$path',
                                                 'store_true': True},
                                help=u'print paths for matched items or albums')
         self.add_option(path)
@@ -1064,48 +1063,12 @@ class SubcommandsOptionParser(CommonOptionsParser):
 optparse.Option.ALWAYS_TYPED_ACTIONS += ('callback',)
 
 
-def vararg_callback(option, opt_str, value, parser):
-    """Callback for an option with variable arguments.
-    Manually collect arguments right of a callback-action
-    option (ie. with action="callback"), and add the resulting
-    list to the destination var.
-
-    Usage:
-    parser.add_option("-c", "--callback", dest="vararg_attr",
-                      action="callback", callback=vararg_callback)
-
-    Details:
-    http://docs.python.org/2/library/optparse.html#callback-example-6-variable
-    -arguments
-    """
-    value = [value]
-
-    def floatable(str):
-        try:
-            float(str)
-            return True
-        except ValueError:
-            return False
-
-    for arg in parser.rargs:
-        # stop on --foo like options
-        if arg[:2] == "--" and len(arg) > 2:
-            break
-        # stop on -a, but not on -3 or -3.0
-        if arg[:1] == "-" and len(arg) > 1 and not floatable(arg):
-            break
-        value.append(arg)
-
-    del parser.rargs[:len(value) - 1]
-    setattr(parser.values, option.dest, value)
-
-
 # The main entry point and bootstrapping.
 
 def _load_plugins(config):
     """Load the plugins specified in the configuration.
     """
-    paths = config['pluginpath'].get(confit.StrSeq(split=False))
+    paths = config['pluginpath'].as_str_seq(split=False)
     paths = [util.normpath(p) for p in paths]
     log.debug(u'plugin paths: {0}', util.displayable_path(paths))
 
@@ -1169,28 +1132,6 @@ def _configure(options):
         log.set_global_level(logging.DEBUG)
     else:
         log.set_global_level(logging.INFO)
-
-    # Ensure compatibility with old (top-level) color configuration.
-    # Deprecation msg to motivate user to switch to config['ui']['color].
-    if config['color'].exists():
-        log.warning(u'Warning: top-level configuration of `color` '
-                    u'is deprecated. Configure color use under `ui`. '
-                    u'See documentation for more info.')
-        config['ui']['color'].set(config['color'].get(bool))
-
-    # Compatibility from list_format_{item,album} to format_{item,album}
-    for elem in ('item', 'album'):
-        old_key = 'list_format_{0}'.format(elem)
-        if config[old_key].exists():
-            new_key = 'format_{0}'.format(elem)
-            log.warning(
-                u'Warning: configuration uses "{0}" which is deprecated'
-                u' in favor of "{1}" now that it affects all commands. '
-                u'See changelog & documentation.',
-                old_key,
-                new_key,
-            )
-            config[new_key].set(config[old_key])
 
     config_path = config.user_config_path()
     if os.path.isfile(config_path):

@@ -6,6 +6,7 @@ import:
     copy: yes
     move: no
     link: no
+    hardlink: no
     delete: no
     resume: ask
     incremental: no
@@ -24,6 +25,7 @@ import:
     pretend: false
     search_ids: []
     duplicate_action: ask
+    bell: no  
 
 clutter: ["Thumbs.DB", ".DS_Store"]
 ignore: [".*", "*~", "System Volume Information", "lost+found"]

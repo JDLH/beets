@@ -72,7 +72,8 @@ box. To extract `rar` files, install the `rarfile`_ package and the
 Optional command flags:
 
 * By default, the command copies files your the library directory and
-  updates the ID3 tags on your music. If you'd like to leave your music
+  updates the ID3 tags on your music. In order to move the files, instead of 
+  copying, use the ``-m`` (move) option. If you'd like to leave your music
   files untouched, try the ``-C`` (don't copy) and ``-W`` (don't write tags)
   options. You can also disable this behavior by default in the
   configuration file (below).
@@ -227,7 +228,7 @@ modify
 ``````
 ::
 
-    beet modify [-MWay] QUERY [FIELD=VALUE...] [FIELD!...]
+    beet modify [-MWay] [-f FORMAT] QUERY [FIELD=VALUE...] [FIELD!...]
 
 Change the metadata for items or albums in the database.
 
@@ -237,13 +238,27 @@ artist="Tom Tom Club"`` will change the artist for the track "Genius of Love."
 To remove fields (which is only possible for flexible attributes), follow a
 field name with an exclamation point: ``field!``.
 
-The ``-a`` switch operates on albums instead of
-individual tracks. Items will automatically be moved around when necessary if
-they're in your library directory, but you can disable that with ``-M``. Tags
-will be written to the files according to the settings you have for imports,
-but these can be overridden with ``-w`` (write tags, the default) and ``-W``
-(don't write tags).  Finally, this command politely asks for your permission
-before making any changes, but you can skip that prompt with the ``-y`` switch.
+The ``-a`` switch operates on albums instead of individual tracks. Without
+this flag, the command will only change *track-level* data, even if all the
+tracks belong to the same album. If you want to change an *album-level* field,
+such as ``year`` or ``albumartist``, you'll want to use the ``-a`` flag to
+avoid a confusing situation where the data for individual tracks conflicts
+with the data for the whole album.
+
+Items will automatically be moved around when necessary if they're in your
+library directory, but you can disable that with  ``-M``. Tags will be written
+to the files according to the settings you have for imports, but these can be
+overridden with ``-w`` (write tags, the default) and ``-W`` (don't write
+tags).
+
+When you run the ``modify`` command, it prints a list of all
+affected items in the library and asks for your permission before making any
+changes. You can then choose to abort the change (type `n`), confirm
+(`y`), or interactively choose some of the items (`s`). In the latter case,
+the command will prompt you for every matching item or album and invite you to
+type `y` or `n`. This option lets you choose precisely which data to change
+without spending too much time to carefully craft a query. To skip the prompts
+entirely, use the ``-y`` option.
 
 .. _move-cmd:
 
@@ -272,7 +287,7 @@ update
 ``````
 ::
 
-    beet update [-aM] QUERY
+    beet update [-F] FIELD [-aM] QUERY
 
 Update the library (and, optionally, move files) to reflect out-of-band metadata
 changes and file deletions.
@@ -287,6 +302,11 @@ edited.
 To perform a "dry run" of an update, just use the ``-p`` (for "pretend") flag.
 This will show you all the proposed changes but won't actually change anything
 on disk.
+
+By default, all the changed metadata will be populated back to the database.
+If you only want certain fields to be written, specify them with the ```-F```
+flags (which can be used multiple times). For the list of supported fields,
+please see ```beet fields```.
 
 When an updated track is part of an album, the album-level fields of *all*
 tracks from the album are also updated. (Specifically, the command copies
@@ -318,7 +338,7 @@ You can think of this command as the opposite of :ref:`update-cmd`.
 
 The ``-p`` option previews metadata changes without actually applying them.
 
-The ``-f`` option forces a write to the file, even if the file tags match the database. This is useful for making sure that enabled plugins that run on write (e.g., the Scrub and Zero plugins) are run on the file. 
+The ``-f`` option forces a write to the file, even if the file tags match the database. This is useful for making sure that enabled plugins that run on write (e.g., the Scrub and Zero plugins) are run on the file.
 
 
 

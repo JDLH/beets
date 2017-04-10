@@ -161,6 +161,10 @@ The events currently available are:
   for a file.
   Parameters: ``item``, ``source`` path, ``destination`` path
 
+* `item_hardlinked`: called with an ``Item`` object whenever a hardlink is
+  created for a file.
+  Parameters: ``item``, ``source`` path, ``destination`` path
+
 * `item_removed`: called with an ``Item`` object every time an item (singleton
   or album's part) is removed from the library (even when its file is not
   deleted from disk).
@@ -592,8 +596,6 @@ by the choices on the core importer prompt, and hence should not be used:
 ``a``, ``s``, ``u``, ``t``, ``g``, ``e``, ``i``, ``b``.
 
 Additionally, the callback function can optionally specify the next action to
-be performed by returning one of the values from ``importer.action``, which
-will be passed to the main loop upon the callback has been processed. Note that
-``action.MANUAL`` and ``action.MANUAL_ID`` will have no effect even if
-returned by the callback, due to the current architecture of the import
-process.
+be performed by returning a ``importer.action`` value. It may also return a
+``autotag.Proposal`` value to update the set of current proposals to be
+considered.

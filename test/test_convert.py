@@ -17,14 +17,14 @@ from __future__ import division, absolute_import, print_function
 
 import re
 import os.path
+import unittest
+
 from test import _common
-from test._common import unittest
 from test import helper
-from test.helper import control_stdin
+from test.helper import control_stdin, capture_log
 
 from beets.mediafile import MediaFile
 from beets import util
-from beets import ui
 
 
 class TestHelper(helper.TestHelper):
@@ -119,7 +119,7 @@ class ConvertCommand(object):
         """Run the `convert` command on a given path."""
         # The path is currently a filesystem bytestring. Convert it to
         # an argument bytestring.
-        path = path.decode(util._fsencoding()).encode(ui._arg_encoding())
+        path = path.decode(util._fsencoding()).encode(util.arg_encoding())
 
         args = args + (b'path:' + path,)
         return self.run_command('convert', *args)
@@ -169,7 +169,7 @@ class ConvertCliTest(unittest.TestCase, TestHelper, ConvertCommand):
         converted = os.path.join(self.convert_dest, b'converted.mp3')
         self.assertFileTag(converted, 'mp3')
 
-    def test_rejecet_confirmation(self):
+    def test_reject_confirmation(self):
         with control_stdin('n'):
             self.run_convert()
         converted = os.path.join(self.convert_dest, b'converted.mp3')
@@ -215,6 +215,11 @@ class ConvertCliTest(unittest.TestCase, TestHelper, ConvertCommand):
         self.run_convert('--pretend')
         converted = os.path.join(self.convert_dest, b'converted.mp3')
         self.assertFalse(os.path.exists(converted))
+
+    def test_empty_query(self):
+        with capture_log('beets.convert') as logs:
+            self.run_convert('An impossible query')
+        self.assertEqual(logs[0], u'convert: Empty query result.')
 
 
 @_common.slow_test()

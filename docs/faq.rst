@@ -2,11 +2,12 @@ FAQ
 ###
 
 Here are some answers to frequently-asked questions from IRC and elsewhere.
-Got a question that isn't answered here? Try `IRC`_, the `mailing list`_, or
+Got a question that isn't answered here? Try `IRC`_, the `discussion board`_, or
 :ref:`filing an issue <bugs>` in the bug tracker.
 
 .. _IRC: irc://irc.freenode.net/beets
 .. _mailing list: http://groups.google.com/group/beets-users
+.. _discussion board: http://discourse.beets.io
 
 .. contents::
     :local:
@@ -327,7 +328,7 @@ FLAC files.
 If beets still complains about a file that seems to be valid, `file a
 bug <https://github.com/beetbox/beets/issues/new>`__ and we'll look into
 it. There's always a possibility that there's a bug "upstream" in the
-`Mutagen <http://code.google.com/p/mutagen/>`__ library used by beets,
+`Mutagen <https://github.com/quodlibet/mutagen>`__ library used by beets,
 in which case we'll forward the bug to that project's tracker.
 
 

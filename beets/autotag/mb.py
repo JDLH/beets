@@ -30,7 +30,11 @@ from beets import config
 import six
 
 VARIOUS_ARTISTS_ID = '89ad4ac3-39f7-470e-963a-56509c546377'
-BASE_URL = 'http://musicbrainz.org/'
+
+if util.SNI_SUPPORTED:
+    BASE_URL = 'https://musicbrainz.org/'
+else:
+    BASE_URL = 'http://musicbrainz.org/'
 
 musicbrainzngs.set_useragent('beets', beets.__version__,
                              'http://beets.io/')
@@ -54,8 +58,12 @@ class MusicBrainzAPIError(util.HumanReadableException):
 log = logging.getLogger('beets')
 
 RELEASE_INCLUDES = ['artists', 'media', 'recordings', 'release-groups',
-                    'labels', 'artist-credits', 'aliases']
+                    'labels', 'artist-credits', 'aliases',
+                    'recording-level-rels', 'work-rels',
+                    'work-level-rels', 'artist-rels']
 TRACK_INCLUDES = ['artists', 'aliases']
+if 'work-level-rels' in musicbrainzngs.VALID_INCLUDES['recording']:
+    TRACK_INCLUDES += ['work-level-rels', 'artist-rels']
 
 
 def track_url(trackid):
@@ -99,6 +107,24 @@ def _preferred_alias(aliases):
             continue
 
         return matches[0]
+
+
+def _preferred_release_event(release):
+    """Given a release, select and return the user's preferred release
+    event as a tuple of (country, release_date). Fall back to the
+    default release event if a preferred event is not found.
+    """
+    countries = config['match']['preferred']['countries'].as_str_seq()
+
+    for event in release.get('release-event-list', {}):
+        for country in countries:
+            try:
+                if country in event['area']['iso-3166-1-code-list']:
+                    return country, event['date']
+            except KeyError:
+                pass
+
+    return release.get('country'), release.get('date')
 
 
 def _flatten_artist_credit(credit):
@@ -179,6 +205,33 @@ def track_info(recording, index=None, medium=None, medium_index=None,
     if recording.get('length'):
         info.length = int(recording['length']) / (1000.0)
 
+    lyricist = []
+    composer = []
+    for work_relation in recording.get('work-relation-list', ()):
+        if work_relation['type'] != 'performance':
+            continue
+        for artist_relation in work_relation['work'].get(
+                'artist-relation-list', ()):
+            if 'type' in artist_relation:
+                type = artist_relation['type']
+                if type == 'lyricist':
+                    lyricist.append(artist_relation['artist']['name'])
+                elif type == 'composer':
+                    composer.append(artist_relation['artist']['name'])
+    if lyricist:
+        info.lyricist = u', '.join(lyricist)
+    if composer:
+        info.composer = u', '.join(composer)
+
+    arranger = []
+    for artist_relation in recording.get('artist-relation-list', ()):
+        if 'type' in artist_relation:
+            type = artist_relation['type']
+            if type == 'arranger':
+                arranger.append(artist_relation['artist']['name'])
+    if arranger:
+        info.arranger = u', '.join(arranger)
+
     info.decode()
     return info
 
@@ -234,6 +287,7 @@ def album_info(release):
             )
             ti.disctitle = disctitle
             ti.media = format
+            ti.track_alt = track['number']
 
             # Prefer track data, where present, over recording data.
             if track.get('title'):
@@ -265,7 +319,6 @@ def album_info(release):
         info.artist = config['va_name'].as_str()
     info.asin = release.get('asin')
     info.releasegroup_id = release['release-group']['id']
-    info.country = release.get('country')
     info.albumstatus = release.get('status')
 
     # Build up the disambiguation string from the release group and release.
@@ -282,8 +335,8 @@ def album_info(release):
         if reltype:
             info.albumtype = reltype.lower()
 
-    # Release dates.
-    release_date = release.get('date')
+    # Release events.
+    info.country, release_date = _preferred_release_event(release)
     release_group_date = release['release-group'].get('first-release-date')
     if not release_date:
         # Fall back if release-specific date is not available.
@@ -338,6 +391,7 @@ def match_album(artist, album, tracks=None):
         return
 
     try:
+        log.debug(u'Searching for MusicBrainz releases with: {!r}', criteria)
         res = musicbrainzngs.search_releases(
             limit=config['musicbrainz']['searchlimit'].get(int), **criteria)
     except musicbrainzngs.MusicBrainzError as exc:
@@ -388,6 +442,7 @@ def album_for_id(releaseid):
     object or None if the album is not found. May raise a
     MusicBrainzAPIError.
     """
+    log.debug(u'Requesting MusicBrainz release {}', releaseid)
     albumid = _parse_id(releaseid)
     if not albumid:
         log.debug(u'Invalid MBID ({0}).', releaseid)

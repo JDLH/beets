@@ -17,10 +17,11 @@
 
 from __future__ import division, absolute_import, print_function
 
-from test._common import unittest
+import unittest
 import sys
 import tempfile
 from beets.util import hidden
+from beets import util
 import subprocess
 import errno
 import ctypes
@@ -71,7 +72,8 @@ class HiddenFileTest(unittest.TestCase):
             return
 
         with tempfile.NamedTemporaryFile(prefix='.tmp') as f:
-            self.assertTrue(hidden.is_hidden(f.name))
+            fn = util.bytestring_path(f.name)
+            self.assertTrue(hidden.is_hidden(fn))
 
 
 def suite():

@@ -56,7 +56,7 @@ if 'sdist' in sys.argv:
 
 setup(
     name='beets',
-    version='1.4.0',
+    version='1.4.4',
     description='music tagger and library organizer',
     author='Adrian Sampson',
     author_email='adrian@radbox.org',
@@ -86,8 +86,8 @@ setup(
     },
 
     install_requires=[
-        'six',
-        'mutagen>=1.31',
+        'six>=1.9',
+        'mutagen>=1.33',
         'munkres',
         'unidecode',
         'musicbrainzngs>=0.4',
@@ -106,16 +106,18 @@ setup(
         'pyxdg',
         'pathlib',
         'python-mpd2',
+        'discogs-client'
     ],
 
     # Plugin (optional) dependencies:
     extras_require={
+        'absubmit': ['requests'],
         'fetchart': ['requests'],
         'chroma': ['pyacoustid'],
-        'discogs': ['discogs-client>=2.1.0'],
+        'discogs': ['discogs-client>=2.2.1'],
         'beatport': ['requests-oauthlib>=0.6.1'],
         'lastgenre': ['pylast'],
-        'mpdstats': ['python-mpd2'],
+        'mpdstats': ['python-mpd2>=0.4.2'],
         'web': ['flask', 'flask-cors'],
         'import': ['rarfile'],
         'thumbnails': ['pyxdg'] +
@@ -125,6 +127,7 @@ setup(
     # Non-Python/non-PyPI plugin dependencies:
     # convert: ffmpeg
     # bpd: python-gi and GStreamer
+    # absubmit: extractor binary from http://acousticbrainz.org/download
 
     classifiers=[
         'Topic :: Multimedia :: Sound/Audio',
@@ -134,5 +137,8 @@ setup(
         'Environment :: Web Environment',
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
     ],
 )

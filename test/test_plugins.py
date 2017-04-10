@@ -19,6 +19,7 @@ import os
 from mock import patch, Mock, ANY
 import shutil
 import itertools
+import unittest
 
 from beets.importer import SingletonImportTask, SentinelImportTask, \
     ArchiveImportTask, action
@@ -26,11 +27,11 @@ from beets import plugins, config, ui
 from beets.library import Item
 from beets.dbcore import types
 from beets.mediafile import MediaFile
-from beets.util import displayable_path, bytestring_path
+from beets.util import displayable_path, bytestring_path, syspath
 
 from test.test_importer import ImportHelper, AutotagStub
 from test.test_ui_importer import TerminalImportSessionSetup
-from test._common import unittest, RSRC
+from test._common import RSRC
 from test import helper
 
 
@@ -117,7 +118,7 @@ class ItemWriteTest(unittest.TestCase, TestHelper):
         item = self.add_item_fixture(artist=u'XXX')
         item.write()
 
-        mediafile = MediaFile(item.path)
+        mediafile = MediaFile(syspath(item.path))
         self.assertEqual(mediafile.artist, u'YYY')
 
     def register_listener(self, event, func):

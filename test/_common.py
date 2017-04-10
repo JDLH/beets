@@ -27,15 +27,15 @@ from contextlib import contextmanager
 
 
 # Mangle the search path to include the beets sources.
-sys.path.insert(0, '..')  # noqa
-import beets.library
-from beets import importer, logging
-from beets.ui import commands
-from beets import util
-import beets
+sys.path.insert(0, '..')
+import beets.library  # noqa: E402
+from beets import importer, logging  # noqa: E402
+from beets.ui import commands  # noqa: E402
+from beets import util  # noqa: E402
+import beets  # noqa: E402
 
 # Make sure the development versions of the plugins are used
-import beetsplug
+import beetsplug  # noqa: E402
 beetsplug.__path__ = [os.path.abspath(
     os.path.join(__file__, '..', '..', 'beetsplug')
 )]
@@ -44,7 +44,7 @@ beetsplug.__path__ = [os.path.abspath(
 RSRC = util.bytestring_path(os.path.join(os.path.dirname(__file__), 'rsrc'))
 PLUGINPATH = os.path.join(os.path.dirname(__file__), 'rsrc', 'beetsplug')
 
-# Propagate to root loger so nosetest can capture it
+# Propagate to root logger so nosetest can capture it
 log = logging.getLogger('beets')
 log.propagate = True
 log.setLevel(logging.DEBUG)
@@ -54,6 +54,7 @@ _item_ident = 0
 
 # OS feature test.
 HAVE_SYMLINK = sys.platform != 'win32'
+HAVE_HARDLINK = sys.platform != 'win32'
 
 
 def item(lib=None):
@@ -65,7 +66,9 @@ def item(lib=None):
         albumartist=u'the album artist',
         album=u'the album',
         genre=u'the genre',
+        lyricist=u'the lyricist',
         composer=u'the composer',
+        arranger=u'the arranger',
         grouping=u'the grouping',
         year=1,
         month=2,
@@ -138,10 +141,6 @@ class Assertions(object):
 
     def assert_equal_path(self, a, b):
         """Check that two paths are equal."""
-        # The common case.
-        if a == b:
-            return
-
         self.assertEqual(util.normpath(a), util.normpath(b),
                          u'paths are not equal: {!r} and {!r}'.format(a, b))
 
@@ -248,7 +247,7 @@ class InputException(Exception):
 
 
 class DummyOut(object):
-    encoding = 'utf8'
+    encoding = 'utf-8'
 
     def __init__(self):
         self.buf = []
@@ -270,7 +269,7 @@ class DummyOut(object):
 
 
 class DummyIn(object):
-    encoding = 'utf8'
+    encoding = 'utf-8'
 
     def __init__(self, out=None):
         self.buf = []
@@ -335,6 +334,29 @@ class Bag(object):
 
     def __getattr__(self, key):
         return self.fields.get(key)
+
+
+# Convenience methods for setting up a temporary sandbox directory for tests
+# that need to interact with the filesystem.
+
+class TempDirMixin(object):
+    """Text mixin for creating and deleting a temporary directory.
+    """
+
+    def create_temp_dir(self):
+        """Create a temporary directory and assign it into `self.temp_dir`.
+        Call `remove_temp_dir` later to delete it.
+        """
+        path = tempfile.mkdtemp()
+        if not isinstance(path, bytes):
+            path = path.encode('utf8')
+        self.temp_dir = path
+
+    def remove_temp_dir(self):
+        """Delete the temporary directory created by `create_temp_dir`.
+        """
+        if os.path.isdir(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
 
 
 # Platform mocking.

@@ -17,11 +17,9 @@
 """
 from __future__ import division, absolute_import, print_function
 
-import warnings
-
-from test._common import unittest
-from beets.util import functemplate
+import unittest
 import six
+from beets.util import functemplate
 
 
 def _normexpr(expr):
@@ -213,12 +211,21 @@ class ParseTest(unittest.TestCase):
         self._assert_call(arg_parts[0], u"bar", 1)
         self.assertEqual(list(_normexpr(arg_parts[0].args[0])), [u'baz'])
 
-    def test_fail_on_utf8(self):
-        parts = u'é'.encode('utf8')
-        warnings.simplefilter("ignore")
-        with self.assertRaises(UnicodeDecodeError):
-            functemplate._parse(parts)
-        warnings.simplefilter("default")
+    def test_sep_before_call_two_args(self):
+        parts = list(_normparse(u'hello, %foo{bar,baz}'))
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(parts[0], u'hello, ')
+        self._assert_call(parts[1], u"foo", 2)
+        self.assertEqual(list(_normexpr(parts[1].args[0])), [u'bar'])
+        self.assertEqual(list(_normexpr(parts[1].args[1])), [u'baz'])
+
+    def test_sep_with_symbols(self):
+        parts = list(_normparse(u'hello,$foo,$bar'))
+        self.assertEqual(len(parts), 4)
+        self.assertEqual(parts[0], u'hello,')
+        self._assert_symbol(parts[1], u"foo")
+        self.assertEqual(parts[2], u',')
+        self._assert_symbol(parts[3], u"bar")
 
 
 class EvalTest(unittest.TestCase):

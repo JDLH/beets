@@ -23,10 +23,9 @@ import warnings
 import re
 from six.moves import zip
 
-from beets import logging
 from beets import ui
 from beets.plugins import BeetsPlugin
-from beets.util import syspath, command_output, displayable_path
+from beets.util import syspath, command_output, displayable_path, py3_path
 
 
 # Utilities.
@@ -60,7 +59,7 @@ def call(args):
     except UnicodeEncodeError:
         # Due to a bug in Python 2's subprocess on Windows, Unicode
         # filenames can fail to encode on that platform. See:
-        # http://code.google.com/p/beets/issues/detail?id=499
+        # https://github.com/google-code-export/beets/issues/499
         raise ReplayGainError(u"argument encoding failed")
 
 
@@ -102,9 +101,9 @@ class Bs1770gainBackend(Backend):
             'method': 'replaygain',
         })
         self.chunk_at = config['chunk_at'].as_number()
-        self.method = b'--' + bytes(config['method'].as_str())
+        self.method = '--' + config['method'].as_str()
 
-        cmd = b'bs1770gain'
+        cmd = 'bs1770gain'
         try:
             call([cmd, self.method])
             self.command = cmd
@@ -194,8 +193,8 @@ class Bs1770gainBackend(Backend):
         """
         # Construct shell command.
         cmd = [self.command]
-        cmd = cmd + [self.method]
-        cmd = cmd + [b'-p']
+        cmd += [self.method]
+        cmd += ['-p']
 
         # Workaround for Windows: the underlying tool fails on paths
         # with the \\?\ prefix, so we don't use it here. This
@@ -220,14 +219,14 @@ class Bs1770gainBackend(Backend):
         containing information about each analyzed file.
         """
         out = []
-        data = text.decode('utf8', errors='ignore')
+        data = text.decode('utf-8', errors='ignore')
         regex = re.compile(
             u'(\\s{2,2}\\[\\d+\\/\\d+\\].*?|\\[ALBUM\\].*?)'
             '(?=\\s{2,2}\\[\\d+\\/\\d+\\]|\\s{2,2}\\[ALBUM\\]'
             ':|done\\.\\s)', re.DOTALL | re.UNICODE)
         results = re.findall(regex, data)
         for parts in results[0:num_lines]:
-            part = parts.split(b'\n')
+            part = parts.split(u'\n')
             if len(part) == 0:
                 self._log.debug(u'bad tool output: {0!r}', text)
                 raise ReplayGainError(u'bs1770gain failed')
@@ -267,9 +266,9 @@ class CommandBackend(Backend):
                 )
         else:
             # Check whether the program is in $PATH.
-            for cmd in (b'mp3gain', b'aacgain'):
+            for cmd in ('mp3gain', 'aacgain'):
                 try:
-                    call([cmd, b'-v'])
+                    call([cmd, '-v'])
                     self.command = cmd
                 except OSError:
                     pass
@@ -308,9 +307,9 @@ class CommandBackend(Backend):
     def format_supported(self, item):
         """Checks whether the given item is supported by the selected tool.
         """
-        if b'mp3gain' in self.command and item.format != 'MP3':
+        if 'mp3gain' in self.command and item.format != 'MP3':
             return False
-        elif b'aacgain' in self.command and item.format not in ('MP3', 'AAC'):
+        elif 'aacgain' in self.command and item.format not in ('MP3', 'AAC'):
             return False
         return True
 
@@ -334,14 +333,14 @@ class CommandBackend(Backend):
         # tag-writing; this turns the mp3gain/aacgain tool into a gain
         # calculator rather than a tag manipulator because we take care
         # of changing tags ourselves.
-        cmd = [self.command, b'-o', b'-s', b's']
+        cmd = [self.command, '-o', '-s', 's']
         if self.noclip:
             # Adjust to avoid clipping.
-            cmd = cmd + [b'-k']
+            cmd = cmd + ['-k']
         else:
             # Disable clipping warning.
-            cmd = cmd + [b'-c']
-        cmd = cmd + [b'-d', bytes(self.gain_offset)]
+            cmd = cmd + ['-c']
+        cmd = cmd + ['-d', str(self.gain_offset)]
         cmd = cmd + [syspath(i.path) for i in items]
 
         self._log.debug(u'analyzing {0} files', len(items))
@@ -574,7 +573,7 @@ class GStreamerBackend(Backend):
 
         self._file = self._files.pop(0)
         self._pipe.set_state(self.Gst.State.NULL)
-        self._src.set_property("location", syspath(self._file.path))
+        self._src.set_property("location", py3_path(syspath(self._file.path)))
         self._pipe.set_state(self.Gst.State.PLAYING)
         return True
 
@@ -595,7 +594,7 @@ class GStreamerBackend(Backend):
         # Set a new file on the filesrc element, can only be done in the
         # READY state
         self._src.set_state(self.Gst.State.READY)
-        self._src.set_property("location", syspath(self._file.path))
+        self._src.set_property("location", py3_path(syspath(self._file.path)))
 
         # Ensure the filesrc element received the paused state of the
         # pipeline in a blocking manner
@@ -794,7 +793,7 @@ class ReplayGainPlugin(BeetsPlugin):
         "command": CommandBackend,
         "gstreamer": GStreamerBackend,
         "audiotools": AudioToolsBackend,
-        "bs1770gain": Bs1770gainBackend
+        "bs1770gain": Bs1770gainBackend,
     }
 
     def __init__(self):
@@ -934,8 +933,6 @@ class ReplayGainPlugin(BeetsPlugin):
         """Return the "replaygain" ui subcommand.
         """
         def func(lib, opts, args):
-            self._log.setLevel(logging.INFO)
-
             write = ui.should_write()
 
             if opts.album:

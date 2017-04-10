@@ -25,8 +25,8 @@ import re
 import requests
 import unicodedata
 import warnings
-from six.moves import urllib
 import six
+from six.moves import urllib
 
 try:
     from bs4 import SoupStrainer, BeautifulSoup
@@ -51,6 +51,7 @@ except ImportError:
 
 from beets import plugins
 from beets import ui
+import beets
 
 
 DIV_RE = re.compile(r'<(/?)div>?', re.I)
@@ -71,6 +72,7 @@ URL_CHARACTERS = {
     u'\u2016': u'-',
     u'\u2026': u'...',
 }
+USER_AGENT = 'beets/{}'.format(beets.__version__)
 
 
 # Utilities.
@@ -79,7 +81,7 @@ URL_CHARACTERS = {
 def unescape(text):
     """Resolve &#xxx; HTML entities (and some others)."""
     if isinstance(text, bytes):
-        text = text.decode('utf8', 'ignore')
+        text = text.decode('utf-8', 'ignore')
     out = text.replace(u'&nbsp;', u' ')
 
     def replchar(m):
@@ -144,29 +146,32 @@ def search_pairs(item):
     The method also tries to split multiple titles separated with `/`.
     """
 
+    def generate_alternatives(string, patterns):
+        """Generate string alternatives by extracting first matching group for
+           each given pattern."""
+        alternatives = [string]
+        for pattern in patterns:
+            match = re.search(pattern, string, re.IGNORECASE)
+            if match:
+                alternatives.append(match.group(1))
+        return alternatives
+
     title, artist = item.title, item.artist
-    titles = [title]
-    artists = [artist]
 
-    # Remove any featuring artists from the artists name
-    pattern = r"(.*?) {0}".format(plugins.feat_tokens())
-    match = re.search(pattern, artist, re.IGNORECASE)
-    if match:
-        artists.append(match.group(1))
+    patterns = [
+        # Remove any featuring artists from the artists name
+        r"(.*?) {0}".format(plugins.feat_tokens())]
+    artists = generate_alternatives(artist, patterns)
 
-    # Remove a parenthesized suffix from a title string. Common
-    # examples include (live), (remix), and (acoustic).
-    pattern = r"(.+?)\s+[(].*[)]$"
-    match = re.search(pattern, title, re.IGNORECASE)
-    if match:
-        titles.append(match.group(1))
-
-    # Remove any featuring artists from the title
-    pattern = r"(.*?) {0}".format(plugins.feat_tokens(for_artist=False))
-    for title in titles[:]:
-        match = re.search(pattern, title, re.IGNORECASE)
-        if match:
-            titles.append(match.group(1))
+    patterns = [
+        # Remove a parenthesized suffix from a title string. Common
+        # examples include (live), (remix), and (acoustic).
+        r"(.+?)\s+[(].*[)]$",
+        # Remove any featuring artists from the title
+        r"(.*?) {0}".format(plugins.feat_tokens(for_artist=False)),
+        # Remove part of title after colon ':' for songs with subtitles
+        r"(.+?)\s*:.*"]
+    titles = generate_alternatives(title, patterns)
 
     # Check for a dual song (e.g. Pink Floyd - Speak to Me / Breathe)
     # and each of them.
@@ -189,7 +194,7 @@ class Backend(object):
         if isinstance(s, six.text_type):
             for char, repl in URL_CHARACTERS.items():
                 s = s.replace(char, repl)
-            s = s.encode('utf8', 'ignore')
+            s = s.encode('utf-8', 'ignore')
         return urllib.parse.quote(s)
 
     def build_url(self, artist, title):
@@ -207,7 +212,9 @@ class Backend(object):
             # We're not overly worried about the NSA MITMing our lyrics scraper
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
-                r = requests.get(url, verify=False)
+                r = requests.get(url, verify=False, headers={
+                    'User-Agent': USER_AGENT,
+                })
         except requests.RequestException as exc:
             self._log.debug(u'lyrics request failed: {0}', exc)
             return
@@ -227,7 +234,7 @@ class SymbolsReplaced(Backend):
         '>': 'Greater_Than',
         '#': 'Number_',
         r'[\[\{]': '(',
-        r'[\[\{]': ')'
+        r'[\]\}]': ')',
     }
 
     @classmethod
@@ -260,12 +267,15 @@ class Genius(Backend):
     def __init__(self, config, log):
         super(Genius, self).__init__(config, log)
         self.api_key = config['genius_api_key'].as_str()
-        self.headers = {'Authorization': "Bearer %s" % self.api_key}
+        self.headers = {
+            'Authorization': "Bearer %s" % self.api_key,
+            'User-Agent': USER_AGENT,
+        }
 
     def search_genius(self, artist, title):
         query = u"%s %s" % (artist, title)
         url = u'https://api.genius.com/search?q=%s' \
-            % (urllib.parse.quote(query.encode('utf8')))
+            % (urllib.parse.quote(query.encode('utf-8')))
 
         self._log.debug(u'genius: requesting search {}', url)
         try:
@@ -551,14 +561,20 @@ class Google(Backend):
         query = u"%s %s" % (artist, title)
         url = u'https://www.googleapis.com/customsearch/v1?key=%s&cx=%s&q=%s' \
               % (self.api_key, self.engine_id,
-                 urllib.parse.quote(query.encode('utf8')))
+                 urllib.parse.quote(query.encode('utf-8')))
 
-        data = urllib.request.urlopen(url)
-        data = json.load(data)
+        data = self.fetch_url(url)
+        if not data:
+            self._log.debug(u'google backend returned no data')
+            return None
+        try:
+            data = json.loads(data)
+        except ValueError as exc:
+            self._log.debug(u'google backend returned malformed JSON: {}', exc)
         if 'error' in data:
             reason = data['error']['errors'][0]['reason']
-            self._log.debug(u'google lyrics backend error: {0}', reason)
-            return
+            self._log.debug(u'google backend error: {0}', reason)
+            return None
 
         if 'items' in data.keys():
             for item in data['items']:
@@ -624,9 +640,9 @@ class LyricsPlugin(plugins.BeetsPlugin):
                                 u'no API key configured.')
                 sources.remove('google')
             elif not HAS_BEAUTIFUL_SOUP:
-                self._log.warn(u'To use the google lyrics source, you must '
-                               u'install the beautifulsoup4 module. See the '
-                               u'documentation for further details.')
+                self._log.warning(u'To use the google lyrics source, you must '
+                                  u'install the beautifulsoup4 module. See '
+                                  u'the documentation for further details.')
                 sources.remove('google')
 
         self.config['bing_lang_from'] = [
@@ -634,9 +650,9 @@ class LyricsPlugin(plugins.BeetsPlugin):
         self.bing_auth_token = None
 
         if not HAS_LANGDETECT and self.config['bing_client_secret'].get():
-            self._log.warn(u'To use bing translations, you need to '
-                           u'install the langdetect module. See the '
-                           u'documentation for further details.')
+            self._log.warning(u'To use bing translations, you need to '
+                              u'install the langdetect module. See the '
+                              u'documentation for further details.')
 
         self.backends = [self.SOURCE_BACKENDS[source](self.config, self._log)
                          for source in sources]
@@ -645,7 +661,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
         params = {
             'client_id': 'beets',
             'client_secret': self.config['bing_client_secret'],
-            'scope': 'http://api.microsofttranslator.com',
+            'scope': "https://api.microsofttranslator.com",
             'grant_type': 'client_credentials',
         }
 
@@ -752,7 +768,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
         if self.bing_auth_token:
             # Extract unique lines to limit API request size per song
             text_lines = set(text.split('\n'))
-            url = ('http://api.microsofttranslator.com/v2/Http.svc/'
+            url = ('https://api.microsofttranslator.com/v2/Http.svc/'
                    'Translate?text=%s&to=%s' % ('|'.join(text_lines), to_lang))
             r = requests.get(url,
                              headers={"Authorization ": self.bing_auth_token})
@@ -763,7 +779,7 @@ class LyricsPlugin(plugins.BeetsPlugin):
                     self.bing_auth_token = None
                     return self.append_translation(text, to_lang)
                 return text
-            lines_translated = ET.fromstring(r.text.encode('utf8')).text
+            lines_translated = ET.fromstring(r.text.encode('utf-8')).text
             # Use a translation mapping dict to build resulting lyrics
             translations = dict(zip(text_lines, lines_translated.split('|')))
             result = ''

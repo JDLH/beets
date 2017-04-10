@@ -30,7 +30,7 @@ from beets import ui
 
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import GLib, Gst  # noqa ignore=E402
+from gi.repository import GLib, Gst  # noqa: E402
 
 
 Gst.init(None)
@@ -130,7 +130,7 @@ class GstPlayer(object):
         """
         self.player.set_state(Gst.State.NULL)
         if isinstance(path, six.text_type):
-            path = path.encode('utf8')
+            path = path.encode('utf-8')
         uri = 'file://' + urllib.parse.quote(path)
         self.player.set_property("uri", uri)
         self.player.set_state(Gst.State.PLAYING)
@@ -177,12 +177,12 @@ class GstPlayer(object):
             posq = self.player.query_position(fmt)
             if not posq[0]:
                 raise QueryError("query_position failed")
-            pos = posq[1] / (10 ** 9)
+            pos = posq[1] // (10 ** 9)
 
             lengthq = self.player.query_duration(fmt)
             if not lengthq[0]:
                 raise QueryError("query_duration failed")
-            length = lengthq[1] / (10 ** 9)
+            length = lengthq[1] // (10 ** 9)
 
             self.cached_time = (pos, length)
             return (pos, length)

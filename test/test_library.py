@@ -25,9 +25,9 @@ import re
 import unicodedata
 import sys
 import time
+import unittest
 
 from test import _common
-from test._common import unittest
 from test._common import item
 import beets.library
 import beets.mediafile
@@ -392,7 +392,7 @@ class DestinationTest(_common.TestCase):
     def test_unicode_normalized_nfc_on_linux(self):
         instr = unicodedata.normalize('NFD', u'caf\xe9')
         self.lib.path_formats = [(u'default', instr)]
-        dest = self.i.destination(platform='linux2', fragment=True)
+        dest = self.i.destination(platform='linux', fragment=True)
         self.assertEqual(dest, unicodedata.normalize('NFC', instr))
 
     def test_non_mbcs_characters_on_windows(self):
@@ -404,14 +404,14 @@ class DestinationTest(_common.TestCase):
             p = self.i.destination()
             self.assertFalse(b'?' in p)
             # We use UTF-8 to encode Windows paths now.
-            self.assertTrue(u'h\u0259d'.encode('utf8') in p)
+            self.assertTrue(u'h\u0259d'.encode('utf-8') in p)
         finally:
             sys.getfilesystemencoding = oldfunc
 
     def test_unicode_extension_in_fragment(self):
         self.lib.path_formats = [(u'default', u'foo')]
         self.i.path = util.bytestring_path(u'bar.caf\xe9')
-        dest = self.i.destination(platform='linux2', fragment=True)
+        dest = self.i.destination(platform='linux', fragment=True)
         self.assertEqual(dest, u'foo.caf\xe9')
 
     def test_asciify_and_replace(self):
@@ -421,6 +421,13 @@ class DestinationTest(_common.TestCase):
         self.lib.path_formats = [(u'default', u'$title')]
         self.i.title = u'\u201c\u00f6\u2014\u00cf\u201d'
         self.assertEqual(self.i.destination(), np('lib/qo--Iq'))
+
+    def test_asciify_character_expanding_to_slash(self):
+        config['asciify_paths'] = True
+        self.lib.directory = b'lib'
+        self.lib.path_formats = [(u'default', u'$title')]
+        self.i.title = u'ab\xa2\xbdd'
+        self.assertEqual(self.i.destination(), np('lib/abC_1_2d'))
 
     def test_destination_with_replacements(self):
         self.lib.directory = b'base'
@@ -582,6 +589,10 @@ class DestinationFunctionTest(_common.TestCase, PathFormattingMixin):
         self._setf(u'%title{$title}')
         self._assert_dest(b'/base/The Title')
 
+    def test_asciify_variable(self):
+        self._setf(u'%asciify{ab\xa2\xbdd}')
+        self._assert_dest(b'/base/abC_1_2d')
+
     def test_left_variable(self):
         self._setf(u'%left{$title, 3}')
         self._assert_dest(b'/base/the')
@@ -702,8 +713,8 @@ class DisambiguationTest(_common.TestCase, PathFormattingMixin):
         album2.year = 2001
         album2.store()
 
-        self._assert_dest(b'/base/foo 1/the title', self.i1)
-        self._assert_dest(b'/base/foo 2/the title', self.i2)
+        self._assert_dest(b'/base/foo [1]/the title', self.i1)
+        self._assert_dest(b'/base/foo [2]/the title', self.i2)
 
     def test_unique_falls_back_to_second_distinguishing_field(self):
         self._setf(u'foo%aunique{albumartist album,month year}/$title')
@@ -718,6 +729,24 @@ class DisambiguationTest(_common.TestCase, PathFormattingMixin):
         album1.store()
         self._setf(u'foo%aunique{albumartist album,albumtype}/$title')
         self._assert_dest(b'/base/foo [foo_bar]/the title', self.i1)
+
+    def test_drop_empty_disambig_string(self):
+        album1 = self.lib.get_album(self.i1)
+        album1.albumdisambig = None
+        album2 = self.lib.get_album(self.i2)
+        album2.albumdisambig = u'foo'
+        album1.store()
+        album2.store()
+        self._setf(u'foo%aunique{albumartist album,albumdisambig}/$title')
+        self._assert_dest(b'/base/foo/the title', self.i1)
+
+    def test_change_brackets(self):
+        self._setf(u'foo%aunique{albumartist album,year,()}/$title')
+        self._assert_dest(b'/base/foo (2001)/the title', self.i1)
+
+    def test_remove_brackets(self):
+        self._setf(u'foo%aunique{albumartist album,year,}/$title')
+        self._assert_dest(b'/base/foo 2001/the title', self.i1)
 
 
 class PluginDestinationTest(_common.TestCase):
@@ -923,7 +952,7 @@ class PathStringTest(_common.TestCase):
         self.assertTrue(isinstance(i.path, bytes))
 
     def test_special_chars_preserved_in_database(self):
-        path = u'b\xe1r'.encode('utf8')
+        path = u'b\xe1r'.encode('utf-8')
         self.i.path = path
         self.i.store()
         i = list(self.lib.items())[0]
@@ -931,7 +960,7 @@ class PathStringTest(_common.TestCase):
 
     def test_special_char_path_added_to_database(self):
         self.i.remove()
-        path = u'b\xe1r'.encode('utf8')
+        path = u'b\xe1r'.encode('utf-8')
         i = item()
         i.path = path
         self.lib.add(i)
@@ -1055,12 +1084,12 @@ class TemplateTest(_common.LibTestCase):
         self.assertEqual(six.text_type(album), u"foö bar")
         self.assertEqual(bytes(album), b"fo\xc3\xb6 bar")
 
-        config['format_item'] = 'bar $foo'
+        config['format_item'] = u'bar $foo'
         item = beets.library.Item()
         item.foo = u'bar'
         item.tagada = u'togodo'
-        self.assertEqual("{0}".format(item), u"bar bar")
-        self.assertEqual("{0:$tagada}".format(item), u"togodo")
+        self.assertEqual(u"{0}".format(item), u"bar bar")
+        self.assertEqual(u"{0:$tagada}".format(item), u"togodo")
 
 
 class UnicodePathTest(_common.LibTestCase):
@@ -1104,18 +1133,20 @@ class WriteTest(unittest.TestCase, TestHelper):
         shutil.copy(syspath(item.path), syspath(custom_path))
 
         item['artist'] = 'new artist'
-        self.assertNotEqual(MediaFile(custom_path).artist, 'new artist')
-        self.assertNotEqual(MediaFile(item.path).artist, 'new artist')
+        self.assertNotEqual(MediaFile(syspath(custom_path)).artist,
+                            'new artist')
+        self.assertNotEqual(MediaFile(syspath(item.path)).artist,
+                            'new artist')
 
         item.write(custom_path)
-        self.assertEqual(MediaFile(custom_path).artist, 'new artist')
-        self.assertNotEqual(MediaFile(item.path).artist, 'new artist')
+        self.assertEqual(MediaFile(syspath(custom_path)).artist, 'new artist')
+        self.assertNotEqual(MediaFile(syspath(item.path)).artist, 'new artist')
 
     def test_write_custom_tags(self):
         item = self.add_item_fixture(artist='old artist')
         item.write(tags={'artist': 'new artist'})
         self.assertNotEqual(item.artist, 'new artist')
-        self.assertEqual(MediaFile(item.path).artist, 'new artist')
+        self.assertEqual(MediaFile(syspath(item.path)).artist, 'new artist')
 
     def test_write_date_field(self):
         # Since `date` is not a MediaField, this should do nothing.
@@ -1123,7 +1154,7 @@ class WriteTest(unittest.TestCase, TestHelper):
         clean_year = item.year
         item.date = u'foo'
         item.write()
-        self.assertEqual(MediaFile(item.path).year, clean_year)
+        self.assertEqual(MediaFile(syspath(item.path)).year, clean_year)
 
 
 class ItemReadTest(unittest.TestCase):

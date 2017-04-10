@@ -43,8 +43,7 @@ from enum import Enum
 from beets import mediafile
 
 action = Enum('action',
-              ['SKIP', 'ASIS', 'TRACKS', 'MANUAL', 'APPLY', 'MANUAL_ID',
-               'ALBUMS', 'RETAG'])
+              ['SKIP', 'ASIS', 'TRACKS', 'APPLY', 'ALBUMS', 'RETAG'])
 # The RETAG action represents "don't apply any match, but do record
 # new metadata". It's not reachable via the standard command prompt but
 # can be used by plugins.
@@ -221,13 +220,19 @@ class ImportSession(object):
             iconfig['resume'] = False
             iconfig['incremental'] = False
 
-        # Copy, move, and link are mutually exclusive.
+        # Copy, move, link, and hardlink are mutually exclusive.
         if iconfig['move']:
             iconfig['copy'] = False
             iconfig['link'] = False
+            iconfig['hardlink'] = False
         elif iconfig['link']:
             iconfig['copy'] = False
             iconfig['move'] = False
+            iconfig['hardlink'] = False
+        elif iconfig['hardlink']:
+            iconfig['copy'] = False
+            iconfig['move'] = False
+            iconfig['link'] = False
 
         # Only delete when copying.
         if not iconfig['copy']:
@@ -362,8 +367,8 @@ class ImportSession(object):
             # Either accept immediately or prompt for input to decide.
             if self.want_resume is True or \
                self.should_resume(toppath):
-                log.warn(u'Resuming interrupted import of {0}',
-                         util.displayable_path(toppath))
+                log.warning(u'Resuming interrupted import of {0}',
+                            util.displayable_path(toppath))
                 self._is_resuming[toppath] = True
             else:
                 # Clear progress; we're starting from the top.
@@ -443,7 +448,6 @@ class ImportTask(BaseImportTask):
         indicates that an action has been selected for this task.
         """
         # Not part of the task structure:
-        assert choice not in (action.MANUAL, action.MANUAL_ID)
         assert choice != action.APPLY  # Only used internally.
         if choice in (action.SKIP, action.ASIS, action.TRACKS, action.ALBUMS,
                       action.RETAG):
@@ -587,12 +591,12 @@ class ImportTask(BaseImportTask):
         candidate IDs are stored in self.search_ids: if present, the
         initial lookup is restricted to only those IDs.
         """
-        artist, album, candidates, recommendation = \
+        artist, album, prop = \
             autotag.tag_album(self.items, search_ids=self.search_ids)
         self.cur_artist = artist
         self.cur_album = album
-        self.candidates = candidates
-        self.rec = recommendation
+        self.candidates = prop.candidates
+        self.rec = prop.recommendation
 
     def find_duplicates(self, lib):
         """Return a list of albums from `lib` with the same artist and
@@ -656,19 +660,19 @@ class ImportTask(BaseImportTask):
             item.update(changes)
 
     def manipulate_files(self, move=False, copy=False, write=False,
-                         link=False, session=None):
+                         link=False, hardlink=False, session=None):
         items = self.imported_items()
         # Save the original paths of all items for deletion and pruning
         # in the next step (finalization).
         self.old_paths = [item.path for item in items]
         for item in items:
-            if move or copy or link:
+            if move or copy or link or hardlink:
                 # In copy and link modes, treat re-imports specially:
                 # move in-library files. (Out-of-library files are
                 # copied/moved as usual).
                 old_path = item.path
-                if (copy or link) and self.replaced_items[item] and \
-                   session.lib.directory in util.ancestry(old_path):
+                if (copy or link or hardlink) and self.replaced_items[item] \
+                   and session.lib.directory in util.ancestry(old_path):
                     item.move()
                     # We moved the item, so remove the
                     # now-nonexistent file from old_paths.
@@ -676,7 +680,7 @@ class ImportTask(BaseImportTask):
                 else:
                     # A normal import. Just copy files and keep track of
                     # old paths.
-                    item.move(copy, link)
+                    item.move(copy, link, hardlink)
 
             if write and (self.apply or self.choice_flag == action.RETAG):
                 item.try_write()
@@ -830,10 +834,9 @@ class SingletonImportTask(ImportTask):
             plugins.send('item_imported', lib=lib, item=item)
 
     def lookup_candidates(self):
-        candidates, recommendation = autotag.tag_item(
-            self.item, search_ids=self.search_ids)
-        self.candidates = candidates
-        self.rec = recommendation
+        prop = autotag.tag_item(self.item, search_ids=self.search_ids)
+        self.candidates = prop.candidates
+        self.rec = prop.recommendation
 
     def find_duplicates(self, lib):
         """Return a list of items from `lib` that have the same artist
@@ -985,7 +988,7 @@ class ArchiveImportTask(SentinelImportTask):
         `toppath` to that directory.
         """
         for path_test, handler_class in self.handlers():
-            if path_test(self.toppath):
+            if path_test(util.py3_path(self.toppath)):
                 break
 
         try:
@@ -1148,8 +1151,8 @@ class ImportTaskFactory(object):
 
         if not (self.session.config['move'] or
                 self.session.config['copy']):
-            log.warn(u"Archive importing requires either "
-                     u"'copy' or 'move' to be enabled.")
+            log.warning(u"Archive importing requires either "
+                        u"'copy' or 'move' to be enabled.")
             return
 
         log.debug(u'Extracting archive: {0}',
@@ -1179,7 +1182,7 @@ class ImportTaskFactory(object):
                 # Silently ignore non-music files.
                 pass
             elif isinstance(exc.reason, mediafile.UnreadableFileError):
-                log.warn(u'unreadable file: {0}', displayable_path(path))
+                log.warning(u'unreadable file: {0}', displayable_path(path))
             else:
                 log.error(u'error reading {0}: {1}',
                           displayable_path(path), exc)
@@ -1204,8 +1207,8 @@ def read_tasks(session):
         skipped += task_factory.skipped
 
         if not task_factory.imported:
-            log.warn(u'No files imported from {0}',
-                     displayable_path(toppath))
+            log.warning(u'No files imported from {0}',
+                        displayable_path(toppath))
 
     # Show skipped directories (due to incremental/resume).
     if skipped:
@@ -1415,6 +1418,7 @@ def manipulate_files(session, task):
             copy=session.config['copy'],
             write=session.config['write'],
             link=session.config['link'],
+            hardlink=session.config['hardlink'],
             session=session,
         )
 
@@ -1465,6 +1469,14 @@ MULTIDISC_MARKERS = (br'dis[ck]', br'cd')
 MULTIDISC_PAT_FMT = br'^(.*%s[\W_]*)\d'
 
 
+def is_subdir_of_any_in_list(path, dirs):
+    """Returns True if path os a subdirectory of any directory in dirs
+    (a list). In other case, returns False.
+    """
+    ancestors = ancestry(path)
+    return any(d in ancestors for d in dirs)
+
+
 def albums_in_dir(path):
     """Recursively searches the given directory and returns an iterable
     of (paths, items) where paths is a list of directories and items is
@@ -1484,7 +1496,7 @@ def albums_in_dir(path):
         # and add the current directory. If so, just add the directory
         # and move on to the next directory. If not, stop collapsing.
         if collapse_paths:
-            if (not collapse_pat and collapse_paths[0] in ancestry(root)) or \
+            if (is_subdir_of_any_in_list(root, collapse_paths)) or \
                     (collapse_pat and
                      collapse_pat.match(os.path.basename(root))):
                 # Still collapsing.

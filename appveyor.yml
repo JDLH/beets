@@ -12,21 +12,18 @@ environment:
     matrix:
         - PYTHON: C:\Python27
           TOX_ENV: py27-test
-        - PYTHON: C:\Python34
-          TOX_ENV: py34-test
         - PYTHON: C:\Python35
           TOX_ENV: py35-test
+        - PYTHON: C:\Python36
+          TOX_ENV: py36-test
 
 # Install Tox for running tests.
 install:
+    - cinst imagemagick -y
+    # TODO: remove --allow-empty-checksums when unrar offers a proper checksum
+    - cinst unrar -y --allow-empty-checksums
     - "%PYTHON%/Scripts/pip.exe install tox"
     - "%PYTHON%/Scripts/tox.exe -e %TOX_ENV% --notest"
 
 test_script:
     - "%PYTHON%/Scripts/tox.exe -e %TOX_ENV%"
-
-# Allow all failures for now: the tests don't yet pass!
-matrix:
-    allow_failures:
-        - TOX_ENV: py34-test
-        - TOX_ENV: py35-test

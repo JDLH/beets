@@ -22,14 +22,15 @@ import re
 import shutil
 import unicodedata
 import sys
+import stat
 from six import StringIO
 from tempfile import mkstemp
 from zipfile import ZipFile
 from tarfile import TarFile
-from mock import patch
+from mock import patch, Mock
+import unittest
 
 from test import _common
-from test._common import unittest
 from beets.util import displayable_path, bytestring_path, py3_path
 from test.helper import TestImportSession, TestHelper, has_program, capture_log
 from beets import importer
@@ -209,7 +210,8 @@ class ImportHelper(TestHelper):
 
     def _setup_import_session(self, import_dir=None, delete=False,
                               threaded=False, copy=True, singletons=False,
-                              move=False, autotag=True, link=False):
+                              move=False, autotag=True, link=False,
+                              hardlink=False):
         config['import']['copy'] = copy
         config['import']['delete'] = delete
         config['import']['timid'] = True
@@ -219,6 +221,7 @@ class ImportHelper(TestHelper):
         config['import']['autotag'] = autotag
         config['import']['resume'] = False
         config['import']['link'] = link
+        config['import']['hardlink'] = hardlink
 
         self.importer = TestImportSession(
             self.lib, loghandler=None, query=None,
@@ -351,6 +354,24 @@ class NonAutotaggedImportTest(_common.TestCase, ImportHelper):
             self.assert_equal_path(
                 util.bytestring_path(os.readlink(filename)),
                 mediafile.path
+            )
+
+    @unittest.skipUnless(_common.HAVE_HARDLINK, "need hardlinks")
+    def test_import_hardlink_arrives(self):
+        config['import']['hardlink'] = True
+        self.importer.run()
+        for mediafile in self.import_media:
+            filename = os.path.join(
+                self.libdir,
+                b'Tag Artist', b'Tag Album',
+                util.bytestring_path('{0}.mp3'.format(mediafile.title))
+            )
+            self.assertExists(filename)
+            s1 = os.stat(mediafile.path)
+            s2 = os.stat(filename)
+            self.assertTrue(
+                (s1[stat.ST_INO], s1[stat.ST_DEV]) ==
+                (s2[stat.ST_INO], s2[stat.ST_DEV])
             )
 
 
@@ -1072,7 +1093,7 @@ class InferAlbumDataTest(_common.TestCase):
         self.assertFalse(self.items[0].comp)
 
 
-def test_album_info():
+def test_album_info(*args, **kwargs):
     """Create an AlbumInfo object for testing.
     """
     track_info = TrackInfo(
@@ -1087,9 +1108,10 @@ def test_album_info():
         album_id=u'albumid',
         artist_id=u'artistid',
     )
-    return album_info
+    return iter([album_info])
 
 
+@patch('beets.autotag.mb.match_album', Mock(side_effect=test_album_info))
 class ImportDuplicateAlbumTest(unittest.TestCase, TestHelper,
                                _common.Assertions):
 
@@ -1099,17 +1121,11 @@ class ImportDuplicateAlbumTest(unittest.TestCase, TestHelper,
         # Original album
         self.add_album_fixture(albumartist=u'artist', album=u'album')
 
-        # Create duplicate through autotagger
-        self.match_album_patcher = patch('beets.autotag.mb.match_album')
-        self.match_album = self.match_album_patcher.start()
-        self.match_album.return_value = iter([test_album_info()])
-
         # Create import session
         self.importer = self.create_importer()
         config['import']['autotag'] = True
 
     def tearDown(self):
-        self.match_album_patcher.stop()
         self.teardown_beets()
 
     def test_remove_duplicate_album(self):
@@ -1179,6 +1195,13 @@ class ImportDuplicateAlbumTest(unittest.TestCase, TestHelper,
         return album
 
 
+def test_track_info(*args, **kwargs):
+    return iter([TrackInfo(
+        artist=u'artist', title=u'title',
+        track_id=u'new trackid', index=0,)])
+
+
+@patch('beets.autotag.mb.match_track', Mock(side_effect=test_track_info))
 class ImportDuplicateSingletonTest(unittest.TestCase, TestHelper,
                                    _common.Assertions):
 
@@ -1189,24 +1212,12 @@ class ImportDuplicateSingletonTest(unittest.TestCase, TestHelper,
         self.add_item_fixture(artist=u'artist', title=u'title',
                               mb_trackid='old trackid')
 
-        # Create duplicate through autotagger
-        self.match_track_patcher = patch('beets.autotag.mb.match_track')
-        self.match_track = self.match_track_patcher.start()
-        track_info = TrackInfo(
-            artist=u'artist',
-            title=u'title',
-            track_id=u'new trackid',
-            index=0,
-        )
-        self.match_track.return_value = iter([track_info])
-
         # Import session
         self.importer = self.create_importer()
         config['import']['autotag'] = True
         config['import']['singletons'] = True
 
     def tearDown(self):
-        self.match_track_patcher.stop()
         self.teardown_beets()
 
     def test_remove_duplicate(self):
@@ -1475,10 +1486,10 @@ class MultiDiscAlbumsInDirTest(_common.TestCase):
         """Normalize a path's Unicode combining form according to the
         platform.
         """
-        path = path.decode('utf8')
+        path = path.decode('utf-8')
         norm_form = 'NFD' if sys.platform == 'darwin' else 'NFC'
         path = unicodedata.normalize(norm_form, path)
-        return path.encode('utf8')
+        return path.encode('utf-8')
 
     def test_coalesce_nested_album_multiple_subdirs(self):
         self.create_music()
@@ -1706,7 +1717,81 @@ class ImportPretendTest(_common.TestCase, ImportHelper):
         self.assertEqual(logs, [u'No files imported from {0}'
                          .format(displayable_path(self.empty_path))])
 
+# Helpers for ImportMusicBrainzIdTest.
 
+
+def mocked_get_release_by_id(id_, includes=[], release_status=[],
+                             release_type=[]):
+    """Mimic musicbrainzngs.get_release_by_id, accepting only a restricted list
+    of MB ids (ID_RELEASE_0, ID_RELEASE_1). The returned dict differs only in
+    the release title and artist name, so that ID_RELEASE_0 is a closer match
+    to the items created by ImportHelper._create_import_dir()."""
+    # Map IDs to (release title, artist), so the distances are different.
+    releases = {ImportMusicBrainzIdTest.ID_RELEASE_0: ('VALID_RELEASE_0',
+                                                       'TAG ARTIST'),
+                ImportMusicBrainzIdTest.ID_RELEASE_1: ('VALID_RELEASE_1',
+                                                       'DISTANT_MATCH')}
+
+    return {
+        'release': {
+            'title': releases[id_][0],
+            'id': id_,
+            'medium-list': [{
+                'track-list': [{
+                    'recording': {
+                        'title': 'foo',
+                        'id': 'bar',
+                        'length': 59,
+                    },
+                    'position': 9,
+                    'number': 'A2'
+                }],
+                'position': 5,
+            }],
+            'artist-credit': [{
+                'artist': {
+                    'name': releases[id_][1],
+                    'id': 'some-id',
+                },
+            }],
+            'release-group': {
+                'id': 'another-id',
+            }
+        }
+    }
+
+
+def mocked_get_recording_by_id(id_, includes=[], release_status=[],
+                               release_type=[]):
+    """Mimic musicbrainzngs.get_recording_by_id, accepting only a restricted
+    list of MB ids (ID_RECORDING_0, ID_RECORDING_1). The returned dict differs
+    only in the recording title and artist name, so that ID_RECORDING_0 is a
+    closer match to the items created by ImportHelper._create_import_dir()."""
+    # Map IDs to (recording title, artist), so the distances are different.
+    releases = {ImportMusicBrainzIdTest.ID_RECORDING_0: ('VALID_RECORDING_0',
+                                                         'TAG ARTIST'),
+                ImportMusicBrainzIdTest.ID_RECORDING_1: ('VALID_RECORDING_1',
+                                                         'DISTANT_MATCH')}
+
+    return {
+        'recording': {
+            'title': releases[id_][0],
+            'id': id_,
+            'length': 59,
+            'artist-credit': [{
+                'artist': {
+                    'name': releases[id_][1],
+                    'id': 'some-id',
+                },
+            }],
+        }
+    }
+
+
+@patch('musicbrainzngs.get_recording_by_id',
+       Mock(side_effect=mocked_get_recording_by_id))
+@patch('musicbrainzngs.get_release_by_id',
+       Mock(side_effect=mocked_get_release_by_id))
 class ImportMusicBrainzIdTest(_common.TestCase, ImportHelper):
     """Test the --musicbrainzid argument."""
 
@@ -1721,17 +1806,7 @@ class ImportMusicBrainzIdTest(_common.TestCase, ImportHelper):
         self.setup_beets()
         self._create_import_dir(1)
 
-        # Patch calls to musicbrainzngs.
-        self.release_patcher = patch('musicbrainzngs.get_release_by_id',
-                                     side_effect=mocked_get_release_by_id)
-        self.recording_patcher = patch('musicbrainzngs.get_recording_by_id',
-                                       side_effect=mocked_get_recording_by_id)
-        self.release_patcher.start()
-        self.recording_patcher.start()
-
     def tearDown(self):
-        self.recording_patcher.stop()
-        self.release_patcher.stop()
         self.teardown_beets()
 
     def test_one_mbid_one_album(self):
@@ -1798,76 +1873,6 @@ class ImportMusicBrainzIdTest(_common.TestCase, ImportHelper):
         task.lookup_candidates()
         self.assertEqual(set(['VALID_RECORDING_0', 'VALID_RECORDING_1']),
                          set([c.info.title for c in task.candidates]))
-
-
-# Helpers for ImportMusicBrainzIdTest.
-
-
-def mocked_get_release_by_id(id_, includes=[], release_status=[],
-                             release_type=[]):
-    """Mimic musicbrainzngs.get_release_by_id, accepting only a restricted list
-    of MB ids (ID_RELEASE_0, ID_RELEASE_1). The returned dict differs only in
-    the release title and artist name, so that ID_RELEASE_0 is a closer match
-    to the items created by ImportHelper._create_import_dir()."""
-    # Map IDs to (release title, artist), so the distances are different.
-    releases = {ImportMusicBrainzIdTest.ID_RELEASE_0: ('VALID_RELEASE_0',
-                                                       'TAG ARTIST'),
-                ImportMusicBrainzIdTest.ID_RELEASE_1: ('VALID_RELEASE_1',
-                                                       'DISTANT_MATCH')}
-
-    return {
-        'release': {
-            'title': releases[id_][0],
-            'id': id_,
-            'medium-list': [{
-                'track-list': [{
-                    'recording': {
-                        'title': 'foo',
-                        'id': 'bar',
-                        'length': 59,
-                    },
-                    'position': 9,
-                }],
-                'position': 5,
-            }],
-            'artist-credit': [{
-                'artist': {
-                    'name': releases[id_][1],
-                    'id': 'some-id',
-                },
-            }],
-            'release-group': {
-                'id': 'another-id',
-            }
-        }
-    }
-
-
-def mocked_get_recording_by_id(id_, includes=[], release_status=[],
-                               release_type=[]):
-    """Mimic musicbrainzngs.get_recording_by_id, accepting only a restricted
-    list of MB ids (ID_RECORDING_0, ID_RECORDING_1). The returned dict differs
-    only in the recording title and artist name, so that ID_RECORDING_0 is a
-    closer match to the items created by ImportHelper._create_import_dir()."""
-    # Map IDs to (recording title, artist), so the distances are different.
-    releases = {ImportMusicBrainzIdTest.ID_RECORDING_0: ('VALID_RECORDING_0',
-                                                         'TAG ARTIST'),
-                ImportMusicBrainzIdTest.ID_RECORDING_1: ('VALID_RECORDING_1',
-                                                         'DISTANT_MATCH')}
-
-    return {
-        'recording': {
-            'title': releases[id_][0],
-            'id': id_,
-            'length': 59,
-            'artist-credit': [{
-                'artist': {
-                    'name': releases[id_][1],
-                    'id': 'some-id',
-                },
-            }],
-        }
-    }
 
 
 def suite():

@@ -51,16 +51,16 @@ file. The available options are:
   to all available sources.
   Default: ``filesystem coverart itunes amazon albumart``, i.e., everything but
   ``wikipedia``, ``google`` and ``fanarttv``. Enable those sources for more
-  matches at the cost of some speed. They are searched in the given order, 
+  matches at the cost of some speed. They are searched in the given order,
   thus in the default config, no remote (Web) art source are queried if
-  local art is found in the filesystem. To use a local image as fallback, 
+  local art is found in the filesystem. To use a local image as fallback,
   move it to the end of the list.
 - **google_key**: Your Google API key (to enable the Google Custom Search
   backend).
   Default: None.
 - **google_engine**: The custom search engine to use.
   Default: The `beets custom search engine`_, which searches the entire web.
-  **fanarttv_key**: The personal API key for requesting art from
+- **fanarttv_key**: The personal API key for requesting art from
   fanart.tv. See below.
 - **store_source**: If enabled, fetchart stores the artwork's source in a
   flexible tag named ``art_source``. See below for the rationale behind this.
@@ -157,7 +157,7 @@ Once the library is installed, the plugin will use it to search automatically.
 
 .. _a problem: https://github.com/ocelma/python-itunes/issues/9
 .. _python-itunes: https://github.com/ocelma/python-itunes
-.. _pip: http://pip.openplans.org/
+.. _pip: http://www.pip-installer.org/
 
 Google custom search
 ''''''''''''''''''''
@@ -167,7 +167,7 @@ To use the google image search backend you need to
 option to your key, then add ``google`` to the list of sources in your
 configuration.
 
-.. _register for a Google API key: https://code.google.com/apis/console.
+.. _register for a Google API key: https://console.developers.google.com.
 
 Optionally, you can `define a custom search engine`_. Get your search engine's
 token and use it for your ``google_engine`` configuration option. The

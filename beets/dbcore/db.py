@@ -68,7 +68,7 @@ class FormattedMapping(collections.Mapping):
     def _get_formatted(self, model, key):
         value = model._type(key).format(model.get(key))
         if isinstance(value, bytes):
-            value = value.decode('utf8', 'ignore')
+            value = value.decode('utf-8', 'ignore')
 
         if self.for_path:
             sep_repl = beets.config['path_sep_replace'].as_str()
@@ -342,15 +342,19 @@ class Model(object):
 
     # Database interaction (CRUD methods).
 
-    def store(self):
+    def store(self, fields=None):
         """Save the object's metadata into the library database.
+        :param fields: the fields to be stored. If not specified, all fields
+        will be.
         """
+        if fields is None:
+            fields = self._fields
         self._check_db()
 
         # Build assignments for query.
         assignments = []
         subvars = []
-        for key in self._fields:
+        for key in fields:
             if key != 'id' and key in self._dirty:
                 self._dirty.remove(key)
                 assignments.append(key + '=?')
@@ -692,8 +696,9 @@ class Database(object):
     """The Model subclasses representing tables in this database.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, timeout=5.0):
         self.path = path
+        self.timeout = timeout
 
         self._connections = {}
         self._tx_stacks = defaultdict(list)
@@ -728,19 +733,27 @@ class Database(object):
             if thread_id in self._connections:
                 return self._connections[thread_id]
             else:
-                # Make a new connection. The `sqlite3` module can't use
-                # bytestring paths here on Python 3, so we need to
-                # provide a `str` using `py3_path`.
-                conn = sqlite3.connect(
-                    py3_path(self.path),
-                    timeout=beets.config['timeout'].as_number(),
-                )
-
-                # Access SELECT results like dictionaries.
-                conn.row_factory = sqlite3.Row
-
+                conn = self._create_connection()
                 self._connections[thread_id] = conn
                 return conn
+
+    def _create_connection(self):
+        """Create a SQLite connection to the underlying database.
+
+        Makes a new connection every time. If you need to configure the
+        connection settings (e.g., add custom functions), override this
+        method.
+        """
+        # Make a new connection. The `sqlite3` module can't use
+        # bytestring paths here on Python 3, so we need to
+        # provide a `str` using `py3_path`.
+        conn = sqlite3.connect(
+            py3_path(self.path), timeout=self.timeout
+        )
+
+        # Access SELECT results like dictionaries.
+        conn.row_factory = sqlite3.Row
+        return conn
 
     def _close(self):
         """Close the all connections to the underlying SQLite database
